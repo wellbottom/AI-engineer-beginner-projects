@@ -1,0 +1,54 @@
+# ── Kept out of GitHub (per project decision) ─────────────────────────────
+# Kiro specs, steering, and local settings
+.kiro/
+# Root secrets file (never commit)
+.env
+# Env variants (.env.local, .env.development, etc.)
+.env.*
+# Local design/reference docs
+docs/
+
+# Re-include committed example env files (safe placeholders)
+!.env.example
+!.env.*.example
+
+# ── Secrets / credentials ─────────────────────────────────────────────────
+*.pem
+*.key
+secrets.*
+
+# ── Python (per-service venvs + caches) ───────────────────────────────────
+.venv/
+**/.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / TypeScript / Vite frontend ─────────────────────────────────────
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+*.tsbuildinfo
+coverage/
+
+# ── Data stores (local, not source) ───────────────────────────────────────
+.chroma/
+.pgdata/
+
+# ── Build / tooling caches ────────────────────────────────────────────────
+.turbo/
+build/
+
+# ── OS / editor noise ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

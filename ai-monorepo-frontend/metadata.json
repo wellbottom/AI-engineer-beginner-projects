@@ -1,0 +1,6 @@
+{
+  "name": "AI Monorepo Frontend",
+  "description": "Shared frontend dashboard for six AI mini-projects in the AI Engineer Practice Monorepo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

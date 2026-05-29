@@ -1,0 +1,116 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg: #0B0D10;
+  --surface: #13161B;
+  --surface-2: #1A1E25;
+  --surface-3: #232830;
+  --border: #2A3038;
+  --border-strong: #3A424D;
+  --text: #E6E9EE;
+  --text-muted: #9AA4B2;
+  --text-faint: #646E7C;
+  --primary: #6D8BFF;
+  --primary-hover: #809AFF;
+  --primary-contrast: #0B0D10;
+  --accent: #46D4B3;
+  --warning: #F2B544;
+  --danger: #FF6B6B;
+  --danger-bg: #2A1719;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+}
+
+.light {
+  --bg: #F7F8FA;
+  --surface: #FFFFFF;
+  --surface-2: #F1F3F6;
+  --surface-3: #E7EAF0;
+  --border: #E2E6EC;
+  --border-strong: #CAD1DA;
+  --text: #1B1F24;
+  --text-muted: #5A636E;
+  --text-faint: #8A93A0;
+  --primary: #3A5BFF;
+  --primary-hover: #2C49E0;
+  --primary-contrast: #FFFFFF;
+  --accent: #17A98A;
+  --warning: #B9791A;
+  --danger: #D93A3A;
+  --danger-bg: #FBEAEA;
+}
+
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border-dim: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text-main: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --color-primary-main: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-contrast: var(--primary-contrast);
+  --color-accent-subtle: var(--accent);
+  --color-warning-subtle: var(--warning);
+  --color-danger-subtle: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+}
+
+/* Base custom resets */
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* Caret blinking keyframes for streaming interface */
+@keyframes blink {
+  from, to { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.caret-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret-blink {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+/* Scrollbar customizations */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
