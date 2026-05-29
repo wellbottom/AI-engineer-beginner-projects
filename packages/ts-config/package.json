@@ -1,0 +1,16 @@
+{
+  "name": "@repo/ts-config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared TypeScript, Tailwind, and ESLint configuration consumed by apps/web.",
+  "files": [
+    "base.json",
+    "tailwind.config.base.ts",
+    "eslint.config.base.js"
+  ],
+  "exports": {
+    "./base.json": "./base.json",
+    "./tailwind": "./tailwind.config.base.ts",
+    "./eslint": "./eslint.config.base.js"
+  }
+}

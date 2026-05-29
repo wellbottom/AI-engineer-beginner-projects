@@ -33,7 +33,17 @@ implementation or testing. It is governed by `.kiro/steering/development-workflo
 
 ## Active bugs
 
-_None yet. Add entries as bugs are discovered._
+### BUG-001: pnpm workspace glob must exclude the Python `packages/ai_shared`
+- **Status:** Deferred
+- **Discovered:** 2025-01-08 (Task 1.1 — JS/TS workspace tooling)
+- **Area:** pnpm-workspace.yaml
+- **Branch:** feat/monorepo-scaffold
+- **Edge case:** `packages/` will host BOTH a JS/TS package (`ts-config`) and a Python package (`ai_shared`, added in Task 2.1) that has no `package.json`. A broad `packages/*` glob would make pnpm scan `packages/ai_shared`; while pnpm currently warns-and-skips directories without a `package.json`, relying on that is fragile and could break installs on future pnpm versions.
+- **Expected:** pnpm only manages real JS/TS packages; the Python package is invisible to pnpm/Turborepo (per design: "Python is intentionally outside their scope").
+- **Actual:** Mitigated proactively — `pnpm-workspace.yaml` declares `apps/*` and the explicit `packages/ts-config` (not `packages/*`), matching tasks.md. No failure observed; `pnpm install` resolves 2 workspace projects with exit 0.
+- **Regression test:** `pnpm -r list --depth -1` lists exactly the root and `@repo/ts-config` (no Python dir); `pnpm install` exits 0.
+- **Related requirement / property:** Requirement 1.3, 1.5
+- **Resolution:** Tracked. Revisit if additional JS/TS packages are added under `packages/` (add each explicitly, or use a glob plus an exclusion, rather than a bare `packages/*`).
 
 ## Resolved bugs
 

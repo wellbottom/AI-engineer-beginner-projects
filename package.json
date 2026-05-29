@@ -1,0 +1,20 @@
+{
+  "name": "ai-engineer-practice-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo bundling six AI-engineering practice mini-projects behind one shared frontend.",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "2.9.16"
+  }
+}
