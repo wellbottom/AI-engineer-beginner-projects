@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai_shared"
+version = "0.1.0"
+description = "Shared backend layer (config, errors, LLM client, SSE, persistence) for the AI Engineer Practice Monorepo."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "AI Engineer Practice Monorepo" }]
+dependencies = [
+    # Minimal runtime deps for the Task 2 config + errors layer.
+    # Heavier deps (openai, sqlalchemy, psycopg, chroma, huggingface_hub, etc.)
+    # are added in later tasks as their modules are implemented.
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "hypothesis>=6.100",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai_shared*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
