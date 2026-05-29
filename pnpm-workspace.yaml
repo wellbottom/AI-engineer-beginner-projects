@@ -1,0 +1,6 @@
+# Declares the JavaScript/TypeScript packages managed by pnpm workspaces.
+# Python backends under services/ are intentionally outside this scope; they
+# use per-service venvs and their own dependency manifests.
+packages:
+  - "apps/*"
+  - "packages/ts-config"

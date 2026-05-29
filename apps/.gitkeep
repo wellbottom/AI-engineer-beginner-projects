@@ -1,0 +1,3 @@
+# Placeholder so git tracks the empty apps/ directory.
+# apps/ holds frontend applications. The shared Vite + React SPA will be
+# moved here as apps/web in a later task. Remove this file once apps/web exists.
