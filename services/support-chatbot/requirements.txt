@@ -1,0 +1,27 @@
+# Customer Support Chatbot Backend_Service — the one dependency manifest (Requirement 1.4).
+#
+# The shared backend layer is installed as a local *editable* path dependency so
+# this service reuses ai_shared (config, errors, LLM client, SSE, persistence,
+# history) without duplicating it. Run from this directory:
+#   python -m venv .venv
+#   .venv\Scripts\python -m pip install -r requirements.txt   (Windows)
+#   source .venv/bin/activate && pip install -r requirements.txt  (POSIX)
+-e ../../packages/ai_shared
+
+# FastAPI app + ASGI server.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# Streaming: POST /chat streams over SSE using FastAPI's StreamingResponse with the
+# shared ai_shared.sse frame helpers (so the wire format is identical to every
+# other service and to what the frontend SSE client parses). sse-starlette is
+# intentionally NOT a dependency — the shared ai_shared.sse helpers are the single
+# SSE-formatting source of truth (design "SSE contract"; buglists BUG-004): the
+# helpers already produce fully-formatted `event:`/`data:` frames, and
+# EventSourceResponse would double-encode them.
+
+# --- test dependencies -------------------------------------------------------
+pytest>=8.0
+pytest-asyncio>=0.23
+hypothesis>=6.100
+httpx>=0.27

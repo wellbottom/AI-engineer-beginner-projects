@@ -41,6 +41,8 @@ from ai_shared.history import (
     ToolInvocation,
     WebAgentResult,
     WebAgentRecord,
+    _sanitize_json,
+    _strip_nul,
     build_history_record,
 )
 from ai_shared.llm_types import Usage
@@ -229,24 +231,27 @@ def test_build_history_record_has_exactly_required_fields_plus_timestamp(case):
         assert value is not None, f"{key}.{name} must not be missing"
 
     # 4) Spot-check that the values were faithfully carried from the result and
-    #    that structured sub-objects were normalized to JSON-able shapes.
+    #    that structured sub-objects were normalized to JSON-able shapes. Persisted
+    #    TEXT is NUL-sanitized (BUG-006), so compare against the sanitized expected
+    #    value; non-NUL text (the common case) is unchanged so this still asserts an
+    #    exact carry-over. Image BYTEA is never sanitized.
     if isinstance(record, PlaygroundRecord):
-        assert record.prompt == result.prompt
+        assert record.prompt == _strip_nul(result.prompt)
         assert record.usage == result.usage.to_dict()
     elif isinstance(record, ChatTurnRecord):
-        assert record.session_id == result.session_id
+        assert record.session_id == _strip_nul(result.session_id)
     elif isinstance(record, WebAgentRecord):
-        assert record.citations == [c.to_json() for c in result.citations]
+        assert record.citations == [_sanitize_json(c.to_json()) for c in result.citations]
     elif isinstance(record, DeepResearchRecord):
         assert len(record.report["sections"]) == len(result.sub_questions)
     elif isinstance(record, ImageRecord):
         assert record.image_bytes == result.image_bytes
-        assert record.mime_type == result.mime_type
+        assert record.mime_type == _strip_nul(result.mime_type)
     elif isinstance(record, CapstoneTaskRecord):
         assert record.step_limit_reached == result.step_limit_reached
         assert all(set(t.keys()) == {"tool", "ok", "error"} for t in record.tools_invoked)
     elif isinstance(record, CapstoneIngestRecord):
-        assert record.documents == [d.name for d in result.documents]
+        assert record.documents == [_strip_nul(d.name) for d in result.documents]
 
 
 @settings(max_examples=100, deadline=None)

@@ -354,6 +354,54 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# --------------------------------------------------------------------------- #
+# NUL-byte sanitization (BUG-006).
+#
+# PostgreSQL ``text``/``varchar`` columns cannot store the NUL byte (``\x00``);
+# attempting to persist one raises ``psycopg.DataError`` ("PostgreSQL text fields
+# cannot contain NUL (0x00) bytes"). User-supplied text reaches durable history in
+# every service (playground prompts/responses, chatbot messages, web-agent
+# questions/answers + citation titles, deep-research topics/report bodies, capstone
+# task text/tool errors/document names, ...), so the failure is cross-cutting, not
+# chatbot-specific. Sanitizing NUL out at record construction keeps durable history
+# intact ("keep everything", Requirement 12.2) instead of silently dropping records
+# via the best-effort write wrapper (Requirement 12.4), and it is applied once here
+# for all six projects. BYTEA columns (``ImageRecord.image_bytes``) legitimately
+# hold ``0x00`` and are deliberately left untouched.
+# --------------------------------------------------------------------------- #
+def _strip_nul(s: str) -> str:
+    """Remove NUL bytes (``\\x00``) from a string; a no-op for normal text.
+
+    Postgres text columns reject ``\\x00`` (BUG-006). Stripping it lets the record
+    persist instead of being dropped. Normal text (no NUL) is returned unchanged,
+    so non-NUL input round-trips byte-for-byte.
+    """
+    return s.replace("\x00", "") if "\x00" in s else s
+
+
+def _strip_nul_opt(s: str | None) -> str | None:
+    """:func:`_strip_nul` that passes ``None`` through unchanged (optional fields)."""
+    return None if s is None else _strip_nul(s)
+
+
+def _sanitize_json(value):
+    """Recursively strip NUL bytes from strings inside a JSON-able structure.
+
+    Walks ``dict``/``list`` containers and sanitizes every contained ``str`` (keys
+    and values), leaving non-string scalars (``int``/``float``/``bool``/``None``)
+    untouched. Used for the normalized JSONB payloads (citations, report bodies,
+    sub-questions, tool invocations, ...) so no nested text carries a ``\\x00`` into
+    a JSONB ``text`` field.
+    """
+    if isinstance(value, str):
+        return _strip_nul(value)
+    if isinstance(value, dict):
+        return {_strip_nul(k) if isinstance(k, str) else k: _sanitize_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_json(v) for v in value]
+    return value
+
+
 def build_history_record(
     project: ProjectId,
     result: object,
@@ -375,15 +423,19 @@ def build_history_record(
     """
     ts = created_at if created_at is not None else _now()
 
+    # Every persisted TEXT field is run through ``_strip_nul`` (and nested JSON-able
+    # structures through ``_sanitize_json``) so a stray ``\x00`` never reaches a
+    # Postgres text/varchar column and drops the record (BUG-006). Image BYTEA is
+    # left untouched. Non-NUL text is returned unchanged, so it round-trips exactly.
     if project is ProjectId.PLAYGROUND:
         r = _expect(result, PlaygroundResult, project)
         return PlaygroundRecord(
-            prompt=r.prompt,
-            system_prompt=r.system_prompt,
+            prompt=_strip_nul(r.prompt),
+            system_prompt=_strip_nul_opt(r.system_prompt),
             temperature=r.temperature,
             max_tokens=r.max_tokens,
-            model=r.model,
-            response_text=r.response_text,
+            model=_strip_nul(r.model),
+            response_text=_strip_nul(r.response_text),
             usage=r.usage.to_dict(),
             created_at=ts,
         )
@@ -391,53 +443,53 @@ def build_history_record(
     if project is ProjectId.SUPPORT:
         r = _expect(result, ChatTurnResult, project)
         return ChatTurnRecord(
-            session_id=r.session_id,
-            user_message=r.user_message,
-            assistant_reply=r.assistant_reply,
+            session_id=_strip_nul(r.session_id),
+            user_message=_strip_nul(r.user_message),
+            assistant_reply=_strip_nul(r.assistant_reply),
             created_at=ts,
         )
 
     if project is ProjectId.WEB_AGENT:
         r = _expect(result, WebAgentResult, project)
         return WebAgentRecord(
-            question=r.question,
-            answer=r.answer,
-            citations=[c.to_json() for c in r.citations],
+            question=_strip_nul(r.question),
+            answer=_strip_nul(r.answer),
+            citations=[_sanitize_json(c.to_json()) for c in r.citations],
             created_at=ts,
         )
 
     if project is ProjectId.DEEP_RESEARCH:
         r = _expect(result, DeepResearchResult, project)
         return DeepResearchRecord(
-            topic=r.topic,
-            sub_questions=[sq.to_json() for sq in r.sub_questions],
-            report=r.report.to_json(),
-            citations=[c.to_json() for c in r.citations],
+            topic=_strip_nul(r.topic),
+            sub_questions=[_sanitize_json(sq.to_json()) for sq in r.sub_questions],
+            report=_sanitize_json(r.report.to_json()),
+            citations=[_sanitize_json(c.to_json()) for c in r.citations],
             created_at=ts,
         )
 
     if project is ProjectId.IMAGE:
         r = _expect(result, ImageGenerationResult, project)
         return ImageRecord(
-            prompt=r.prompt,
-            model=r.model,
-            image_bytes=r.image_bytes,
-            mime_type=r.mime_type,
+            prompt=_strip_nul(r.prompt),
+            model=_strip_nul(r.model),
+            image_bytes=r.image_bytes,  # BYTEA: 0x00 is legitimate, never sanitized.
+            mime_type=_strip_nul(r.mime_type),
             created_at=ts,
         )
 
     if project is ProjectId.CAPSTONE:
         if isinstance(result, CapstoneIngestResult):
             return CapstoneIngestRecord(
-                documents=[d.name for d in result.documents],
+                documents=[_strip_nul(d.name) for d in result.documents],
                 created_at=ts,
             )
         if isinstance(result, CapstoneTaskResult):
             return CapstoneTaskRecord(
-                task_text=result.task_text,
-                final_answer=result.final_answer,
-                tools_invoked=[t.to_json() for t in result.tools_invoked],
-                sources=list(result.sources),
+                task_text=_strip_nul(result.task_text),
+                final_answer=_strip_nul(result.final_answer),
+                tools_invoked=[_sanitize_json(t.to_json()) for t in result.tools_invoked],
+                sources=[_strip_nul(s) for s in result.sources],
                 step_limit_reached=result.step_limit_reached,
                 created_at=ts,
             )
