@@ -5,18 +5,26 @@
 
 import React, { useState } from 'react';
 import { Play } from 'lucide-react';
-import { 
-  Card, 
-  Button, 
-  Textarea, 
-  Input, 
-  StreamingMarkdown, 
-  ErrorBanner, 
-  TokenUsage, 
-  PersistenceIndicator 
+import {
+  Card,
+  Button,
+  Textarea,
+  Input,
+  StreamingMarkdown,
+  ErrorBanner,
+  TokenUsage,
+  PersistenceIndicator,
 } from './SharedComponents';
-import { fetchSSEStream, SERVICE_URLS, saveLocalHistoryItem } from '../lib/api';
-import { HistoryRecord, ProjectId, SSEDataEvent, SSEProgressEvent, SSEDoneEvent, SSEErrorEvent } from '../types';
+import { fetchSSEStream, SERVICE_URLS, PROJECT_ENV_VARS } from '../lib/api';
+import {
+  HistoryRecord,
+  SSEDataEvent,
+  SSEDoneEvent,
+  SSEErrorEvent,
+} from '../types';
+
+// The LLM default model identifier fixed by the design (Requirement 3.4 / 2.x).
+const DEFAULT_MODEL = 'claude-opus-4.7';
 
 interface PlaygroundScreenProps {
   onAddHistory: (record: HistoryRecord) => void;
@@ -27,36 +35,32 @@ export const PlaygroundScreen: React.FC<PlaygroundScreenProps> = ({ onAddHistory
   const [systemPrompt, setSystemPrompt] = useState('');
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
-  const [model, setModel] = useState('gemini-3.5-flash');
+  const [model, setModel] = useState(DEFAULT_MODEL);
 
   // Request & streaming states
   const [loading, setLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState('');
   const [doneMetadata, setDoneMetadata] = useState<SSEDoneEvent | null>(null);
-  
+
   // Errors state
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [streamError, setStreamError] = useState<SSEErrorEvent | null>(null);
 
-  // Validate inputs
   const validate = (): boolean => {
     const errors: Record<string, string> = {};
-    
+
     if (!prompt.trim()) {
       errors.prompt = 'Source prompt is required.';
     } else if (prompt.length > 8000) {
       errors.prompt = `Prompt length exceeds 8000 characters limit (currently ${prompt.length}).`;
     }
-
     if (systemPrompt && systemPrompt.length > 4000) {
       errors.systemPrompt = `System prompt length exceeds 4000 characters limit (currently ${systemPrompt.length}).`;
     }
-
     if (temperature < 0.0 || temperature > 2.0) {
       errors.temperature = 'Temperature must be between 0.0 and 2.0.';
     }
-
     if (maxTokens < 1 || maxTokens > 4096) {
       errors.maxTokens = 'Max tokens must be between 1 and 4096.';
     }
@@ -70,104 +74,59 @@ export const PlaygroundScreen: React.FC<PlaygroundScreenProps> = ({ onAddHistory
     if (!validate()) return;
 
     setLoading(true);
-    setIsStreaming(true);
     setStreamedText('');
     setDoneMetadata(null);
     setStreamError(null);
+
+    const baseUrl = SERVICE_URLS.playground;
+    if (!baseUrl) {
+      // Missing backend URL -> clear configuration error, never a fake stream.
+      setLoading(false);
+      setStreamError({
+        action: 'playground_generate',
+        reason: `LLM Playground backend is not configured. Set ${PROJECT_ENV_VARS.playground} to its base URL.`,
+      });
+      return;
+    }
+
+    setIsStreaming(true);
 
     const body = {
       prompt,
       system_prompt: systemPrompt || undefined,
       temperature,
       max_tokens: maxTokens,
-      model: model || undefined
+      model: model || undefined,
     };
 
-    const targetUrl = SERVICE_URLS.playground ? `${SERVICE_URLS.playground}/generate` : '';
-    
     let completeText = '';
     let finalMeta: SSEDoneEvent | null = null;
     let sError: SSEErrorEvent | null = null;
 
-    if (!targetUrl) {
-      // Endpoint is empty, simulate streaming response 
-      try {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setLoading(false);
-        const demoMockText = `This is a sandbox LLM generation response. You are evaluating model parameters:
-- Model: \`${model}\`
-- System Blueprint Instruction: \`${systemPrompt || 'None Supplied'}\`
-- Temperature: \`${temperature}\`
-- Max Tokens: \`${maxTokens}\`
-
-### Interactive Summary output check
-Below is a demonstration stream snippet reflecting output behavior:
-1. Stream tokens render within ~200ms increments.
-2. Complete Markdown elements (headers, code segments) are styled natively.
-3. Final execution triggers local client-side log creation.
-
-\`\`\`typescript
-// Sandbox parameters
-const temperature = ${temperature};
-const maxTokens = ${maxTokens};
-console.log("Model Gateway Sandbox Stream Simulation Active.");
-\`\`\`
-`;
-        const words = demoMockText.split(' ');
-        for (let i = 0; i < words.length; i++) {
-          await new Promise(resolve => setTimeout(resolve, 35));
-          const chunk = words[i] + ' ';
-          completeText += chunk;
+    await fetchSSEStream(
+      `${baseUrl}/generate`,
+      body,
+      {
+        onData: (eventData: SSEDataEvent) => {
+          setLoading(false);
+          completeText += eventData.text;
           setStreamedText(completeText);
-        }
-        
-        finalMeta = {
-          usage: {
-            prompt_tokens: Math.floor(prompt.length / 4) + 12,
-            output_tokens: Math.floor(completeText.length / 4),
-            total_tokens: Math.floor((prompt.length + completeText.length) / 4) + 12
-          },
-          persistence: { ok: false, operation_id: 'local_persistence' }
-        };
-        setDoneMetadata(finalMeta);
-      } catch (err: any) {
-        setStreamError({
-          action: 'mock_generation',
-          reason: err.message || 'Stream collection crashed'
-        });
-      } finally {
-        setIsStreaming(false);
-      }
-    } else {
-      // Hit exact endpoint via stream
-      await fetchSSEStream(
-        targetUrl,
-        body,
-        {
-          onData: (eventData: SSEDataEvent) => {
-            setLoading(false);
-            completeText += eventData.text;
-            setStreamedText(completeText);
-          },
-          onProgress: (progress: SSEProgressEvent) => {
-            // Playground doesn't strictly use stepper, but logs are checked
-          },
-          onDone: (doneEvent: SSEDoneEvent) => {
-            finalMeta = doneEvent;
-            setDoneMetadata(doneEvent);
-          },
-          onError: (errEvent: SSEErrorEvent) => {
-            sError = errEvent;
-            setStreamError(errEvent);
-          }
-        }
-      );
-      
-      setIsStreaming(false);
-      setLoading(false);
-    }
+        },
+        onDone: (doneEvent: SSEDoneEvent) => {
+          finalMeta = doneEvent;
+          setDoneMetadata(doneEvent);
+        },
+        onError: (errEvent: SSEErrorEvent) => {
+          sError = errEvent;
+          setStreamError(errEvent);
+        },
+      },
+    );
 
-    // Capture execution and append to local cache history log
+    setIsStreaming(false);
+    setLoading(false);
+
+    // Surface the run in the in-app history list (backend persists the record).
     if (completeText || sError || finalMeta) {
       const histRecord: HistoryRecord = {
         id: `play_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -179,16 +138,14 @@ console.log("Model Gateway Sandbox Stream Simulation Active.");
           system_prompt: systemPrompt || undefined,
           temperature,
           max_tokens: maxTokens,
-          model
+          model,
         },
         outputs: {
           text: completeText || undefined,
           metadata: finalMeta || undefined,
-          error: sError || undefined
-        }
+          error: sError || undefined,
+        },
       };
-      
-      saveLocalHistoryItem('playground', histRecord);
       onAddHistory(histRecord);
     }
   };
@@ -202,19 +159,19 @@ console.log("Model Gateway Sandbox Stream Simulation Active.");
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      
+
       {/* LEFT Parameters & Input Panel (5 columns) */}
       <div className="lg:col-span-5 flex flex-col gap-5">
-        
+
         {/* Model parameters */}
         <Card title="Sandbox Parameters">
           <div className="flex flex-col gap-4">
-            
+
             {/* Model Selector Name */}
             <Input
               id="model-selector-id"
               label="Model Architecture Override"
-              placeholder="e.g. gemini-3.5-flash"
+              placeholder={`e.g. ${DEFAULT_MODEL}`}
               value={model}
               onChange={(e) => setModel(e.target.value)}
               mono
@@ -298,7 +255,7 @@ console.log("Model Gateway Sandbox Stream Simulation Active.");
               className="w-full gap-2 text-xs font-semibold py-5"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Compile & Run Gateway Stream</span>
+              <span>Compile &amp; Run Gateway Stream</span>
             </Button>
           </div>
         </Card>
@@ -309,7 +266,7 @@ console.log("Model Gateway Sandbox Stream Simulation Active.");
       <div className="lg:col-span-7 flex flex-col gap-5">
         <Card title="Raw Stream Console output">
           <div className="flex flex-col gap-5 min-h-[440px] select-text">
-            
+
             {/* Stream output display screen states */}
             {!loading && !isStreaming && !streamedText && !streamError && (
               <div className="flex-1 flex flex-col items-center justify-center text-center py-24 select-none">
@@ -321,7 +278,11 @@ console.log("Model Gateway Sandbox Stream Simulation Active.");
 
             {/* Loading Initial Response */}
             {loading && !streamedText && (
-              <div className="flex items-center gap-3 py-4 text-xs font-mono text-text-muted animate-pulse select-none">
+              <div
+                role="status"
+                aria-label="Loading"
+                className="flex items-center gap-3 py-4 text-xs font-mono text-text-muted animate-pulse select-none"
+              >
                 <span className="w-2.5 h-2.5 bg-primary-main rounded-full animate-ping" />
                 <span>Synchronizing endpoint and allocating execution resources...</span>
               </div>
@@ -356,7 +317,7 @@ console.log("Model Gateway Sandbox Stream Simulation Active.");
                   outputTokens={doneMetadata.usage?.output_tokens}
                   totalTokens={doneMetadata.usage?.total_tokens}
                 />
-                
+
                 {doneMetadata.persistence && (
                   <PersistenceIndicator
                     ok={doneMetadata.persistence.ok}

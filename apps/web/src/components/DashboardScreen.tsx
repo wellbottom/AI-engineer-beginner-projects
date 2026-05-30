@@ -16,12 +16,12 @@ interface DashboardScreenProps {
 }
 
 const PROVIDERS_MAP: Record<ProjectId, string[]> = {
-  playground: ['LLM Model Gateway', 'Isomorphic Node API'],
-  support: ['Gemini API', 'Session Store'],
-  'web-agent': ['Google Search API', 'Retrieval Synthesizer'],
-  'deep-research': ['Gemini Model', 'Google Search Grounding', 'Multi-Phase Stepper'],
-  image: ['Imagen Model', 'Base64 Stream'],
-  capstone: ['Recursive Agent Core', 'Multipart File Ingestion', 'Tool Sandbox'],
+  playground: ['LLM Gateway'],
+  support: ['LLM Gateway', 'Session Store'],
+  'web-agent': ['Search Provider', 'LLM Gateway'],
+  'deep-research': ['Search Provider', 'Embeddings', 'Vector Store', 'LLM Gateway'],
+  image: ['Image Provider'],
+  capstone: ['Agent', 'MCP Tools', 'Vector Store', 'Embeddings', 'LLM Gateway'],
 };
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({

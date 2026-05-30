@@ -34,7 +34,7 @@ export const NAV_ITEMS: SidebarItem[] = [
   { id: 'support', name: 'Support Chatbot', icon: MessageSquare, description: 'Contextual product help assistant' },
   { id: 'web-agent', name: 'Ask the Web', icon: Globe, description: 'Web-retrieved direct answering engine' },
   { id: 'deep-research', name: 'Deep Research', icon: Search, description: 'Multi-phased web report synthesizer' },
-  { id: 'image', name: 'Image Service', icon: Image, description: 'Generate mock and real art frames' },
+  { id: 'image', name: 'Image Service', icon: Image, description: 'Generate images from text prompts' },
   { id: 'capstone', name: 'Capstone Agent', icon: Briefcase, description: 'Multi-tool recursive file analyst' }
 ];
 

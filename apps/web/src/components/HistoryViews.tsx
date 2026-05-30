@@ -51,11 +51,10 @@ interface HistoryListProps {
   projectId: ProjectId;
   records: HistoryRecord[];
   onSelect: (recordId: string) => void;
-  onDelete: (recordId: string) => void;
+  onDelete?: (recordId: string) => void;
 }
 
 export const HistoryList: React.FC<HistoryListProps> = ({
-  projectId,
   records,
   onSelect,
   onDelete
@@ -113,17 +112,19 @@ export const HistoryList: React.FC<HistoryListProps> = ({
               ) : (
                 <Badge variant="success">Completed</Badge>
               )}
-              
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(record.id);
-                }}
-                title="Remove history record"
-                className="p-1.5 text-text-faint hover:text-danger-subtle hover:bg-danger-subtle/10 rounded cursor-pointer transition-colors opacity-0 group-hover:opacity-100"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+
+              {onDelete && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(record.id);
+                  }}
+                  title="Remove history record"
+                  className="p-1.5 text-text-faint hover:text-danger-subtle hover:bg-danger-subtle/10 rounded cursor-pointer transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
         ))}
