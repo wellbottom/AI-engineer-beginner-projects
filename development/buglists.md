@@ -96,6 +96,30 @@ implementation or testing. It is governed by `.kiro/steering/development-workflo
 - **Related requirement / property:** Requirements 9.2, 9.8; Property 26.
 - **Resolution:** Documented decision. If the user later wants a real over-the-wire MCP transport, replace `app/mcp.py`'s registry with an MCP SDK client/server behind a lazy import, keeping the `list_tools` / `invoke` surface the Agent consumes; record the chosen SDK + its 3.14 wheel status here.
 
+### BUG-010: Alembic concurrent-migration race at Compose startup
+- **Status:** Resolved (mitigated)
+- **Discovered:** 2026-07-?? (Task 15.1/15.2 — Docker Compose deployment)
+- **Area:** deploy/service-entrypoint.sh (shared container entrypoint) + docker-compose.yml (all six backend services)
+- **Branch:** feat/deployment
+- **Edge case:** Under `docker compose up`, all six backend services start together as soon as the `postgres` service becomes healthy (each `depends_on: postgres: condition: service_healthy`). Every service's entrypoint runs `alembic upgrade head` against the SAME shared History_Store schema (one shared `packages/ai_shared` migration history). Six concurrent `alembic upgrade head` invocations can race on the `alembic_version` table / DDL locks, and a service can also reach a Postgres that is accepting connections but still finishing first-boot initialization — either of which can make an individual `alembic upgrade head` fail transiently.
+- **Expected:** Every service ends up running against a schema at `head`, regardless of who wins the migration race, with no service crashing on a transient migration failure.
+- **Actual:** Mitigated in `deploy/service-entrypoint.sh`: `alembic upgrade head` is **idempotent** (a service that loses the race simply finds the schema already at head and is a no-op), and the entrypoint **retries with a 3s backoff up to 10 attempts** before giving up. So a transient race / not-yet-ready Postgres self-heals on retry; only a persistent failure (10 consecutive fails) aborts the container, which then surfaces via the service healthcheck in `docker compose ps` (Requirement 11.9).
+- **Regression test:** Covered indirectly by the deploy integration tests (`tests/deploy/test_integration_deploy.py` — Compose up reachability 11.8, failed-service reporting 11.9) which exercise the real `docker compose up` path; the entrypoint's retry/idempotency is asserted by code review (no dedicated unit test — it is shell glue around Alembic's own idempotency). The smoke test `tests/deploy/test_smoke_deploy.py` asserts the entrypoint + Alembic migration history are present.
+- **Related requirement / property:** Requirements 11.2, 11.8, 11.9, 12.3.
+- **Resolution:** Mitigated by idempotent-upgrade + retry-with-backoff in `deploy/service-entrypoint.sh` (cited from every `services/<name>/Dockerfile`). A heavier alternative — gating migrations behind a single one-shot "migrate" container that the six services depend on — was considered and deferred as over-engineered for a single-shared-schema practice setup; revisit if the retry proves insufficient under load.
+
+### BUG-011: Frontend build-context depends on the Task 16 relocation
+- **Status:** Open
+- **Discovered:** 2026-07-?? (Task 15.1/15.2 — frontend Dockerfile + Compose `web` service)
+- **Area:** docker-compose.yml (`web.build.context`) + ai-monorepo-frontend/Dockerfile (VITE_NEXT_PUBLIC_* alias bridge)
+- **Branch:** feat/deployment
+- **Edge case:** The Shared_Frontend currently lives at `./ai-monorepo-frontend` (repo root), but Task 16 RELOCATES it to `./apps/web`. Two deployment artifacts encode the pre-Task-16 location: (1) `docker-compose.yml`'s `web.build.context` is `./ai-monorepo-frontend` and MUST become `./apps/web` once the SPA moves; (2) the frontend `Dockerfile` forwards each `VITE_*` build arg to a `VITE_NEXT_PUBLIC_*` alias because the current SPA code (`src/lib/api.ts`) still reads the `NEXT_PUBLIC_*`/`VITE_NEXT_PUBLIC_*` names.
+- **Expected:** After Task 16, the Compose `web` build context points at `./apps/web`, the SPA reads the six `VITE_*` names directly (Requirement 2.9), and the alias bridge is removed.
+- **Actual:** Tracked, not yet actionable — the relocation and the env rename are Task 16 work. Until then the alias bridge keeps the pre-Task-16 bundle working and the build context intentionally points at `./ai-monorepo-frontend`. Both spots carry a CLEAR COMMENT pointing here.
+- **Regression test:** Task 16.4 (`apps/web` Vitest, `getServiceUrl`/`SERVICE_URLS` resolve the six `VITE_*` names via `import.meta.env`, non-`VITE_`-prefixed names resolve empty) will assert the SPA reads `VITE_*` directly after the rename; the deploy smoke test asserts a single frontend app + a single Compose `web` service for now.
+- **Related requirement / property:** Requirements 1.1, 2.9, 11.2; Tasks 16.1, 16.2.
+- **Resolution (planned in Task 16):** When Task 16.1 moves the SPA to `apps/web`, change `docker-compose.yml` `web.build.context` to `./apps/web`; when Task 16.2 renames the SPA env reads to `VITE_*`, drop the `VITE_NEXT_PUBLIC_*` alias lines from the frontend `Dockerfile`. Mark Resolved once both land and the Task 16.4 env test passes.
+
 ## Resolved bugs
 
 ### BUG-006: Postgres rejects NUL bytes (`\x00`) in persisted text — durable history silently dropped for such input

@@ -1,0 +1,264 @@
+# =============================================================================
+# AI Engineer Practice Monorepo — single Docker Compose orchestration file.
+#
+# Requirement 11.3: ONE orchestration file starts every container together:
+#   - `web`            the Shared_Frontend SPA (nginx-served Vite bundle)
+#   - six backends     llm-playground / support-chatbot / web-agent /
+#                      deep-research / image-service / capstone (FastAPI)
+#   - `postgres`       the durable History_Store (named volume — Requirement 11.10)
+#   - `pgadmin`        the Database_Manager GUI (Requirement 11.13)
+#
+# Run the whole system:        docker compose up --build       (Requirement 11.6)
+# Validate this file parses:   docker compose config
+#
+# Secrets (Requirement 11.4 / 11.12): the backends load LLM_API_KEY / TAVILY_API_KEY
+# / HF_TOKEN from the root `.env` via `env_file`. The Database credentials are taken
+# from the DB_* variables; Compose interpolates them from `.env` when present and
+# otherwise falls back to the documented defaults below (which match `.env.example`).
+# No secret is hardcoded — every value is either read from `.env` or a safe default.
+# =============================================================================
+
+# Shared DB connection environment for every backend. DB_HOST=postgres points the
+# services at the Compose `postgres` service (not localhost); the rest mirror the
+# postgres service's own credentials so the editable ai_shared.config resolves the
+# same database_url. Values come from `.env` (Requirement 11.12) or the defaults.
+x-db-env: &db-env
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_USER: ${DB_USER:-ai_monorepo}
+  DB_PASSWORD: ${DB_PASSWORD:-changeme}
+  DB_NAME: ${DB_NAME:-ai_monorepo_history}
+
+services:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Shared_Frontend (Vite + React SPA served by nginx).
+  #
+  # !!! BUILD-CONTEXT CAVEAT — Task 16 relocation (tracked: buglists BUG-011) !!!
+  # The SPA currently lives at ./ai-monorepo-frontend, so the build context below
+  # points there. Task 16 MOVES the SPA to ./apps/web; when that happens this
+  # `context` MUST change to ./apps/web (the Dockerfile + nginx.conf move with the
+  # frontend, so `dockerfile: Dockerfile` and the COPY paths stay the same).
+  #
+  # The six backend base URLs are Vite BUILD-TIME args (Requirement 2.9): Vite
+  # inlines VITE_* into the static bundle at build time. They are the URLs the SPA
+  # uses FROM THE BROWSER, so they target the host-published ports (localhost:800x),
+  # not the in-network service names. The frontend Dockerfile bridges each VITE_*
+  # to its VITE_NEXT_PUBLIC_* alias for the pre-Task-16 SPA code.
+  # ──────────────────────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ./ai-monorepo-frontend   # Task 16: change to ./apps/web
+      dockerfile: Dockerfile
+      args:
+        VITE_PLAYGROUND_URL: ${VITE_PLAYGROUND_URL:-http://localhost:8001}
+        VITE_SUPPORT_URL: ${VITE_SUPPORT_URL:-http://localhost:8002}
+        VITE_WEBAGENT_URL: ${VITE_WEBAGENT_URL:-http://localhost:8003}
+        VITE_DEEPRESEARCH_URL: ${VITE_DEEPRESEARCH_URL:-http://localhost:8004}
+        VITE_IMAGE_URL: ${VITE_IMAGE_URL:-http://localhost:8005}
+        VITE_CAPSTONE_URL: ${VITE_CAPSTONE_URL:-http://localhost:8006}
+    # Documented host port: the SPA is reachable at http://localhost:3000 .
+    ports:
+      - "3000:80"
+    depends_on:
+      - llm-playground
+      - support-chatbot
+      - web-agent
+      - deep-research
+      - image-service
+      - capstone
+    healthcheck:
+      # nginx:alpine ships busybox wget — fetch index.html to prove the SPA serves.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Backend services. Each builds from the REPO ROOT context (".") so the shared
+  # packages/ai_shared and deploy/service-entrypoint.sh are in scope; the per-
+  # service Dockerfile is selected explicitly. Each reads secrets from `.env`,
+  # talks to the `postgres` service (DB_HOST=postgres), waits for postgres to be
+  # healthy, and exposes a GET /health healthcheck so a crash/unhealthy container
+  # is reported by `docker compose ps` (Requirement 11.9).
+  # ──────────────────────────────────────────────────────────────────────────
+  llm-playground:
+    build:
+      context: .
+      dockerfile: services/llm-playground/Dockerfile
+    env_file:
+      - .env
+    environment:
+      <<: *db-env
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  support-chatbot:
+    build:
+      context: .
+      dockerfile: services/support-chatbot/Dockerfile
+    env_file:
+      - .env
+    environment:
+      <<: *db-env
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  web-agent:
+    build:
+      context: .
+      dockerfile: services/web-agent/Dockerfile
+    env_file:
+      - .env
+    environment:
+      <<: *db-env
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  deep-research:
+    build:
+      context: .
+      dockerfile: services/deep-research/Dockerfile
+    env_file:
+      - .env
+    environment:
+      <<: *db-env
+    ports:
+      - "8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  image-service:
+    build:
+      context: .
+      dockerfile: services/image-service/Dockerfile
+    env_file:
+      - .env
+    environment:
+      <<: *db-env
+    ports:
+      - "8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  capstone:
+    build:
+      context: .
+      dockerfile: services/capstone/Dockerfile
+    env_file:
+      - .env
+    environment:
+      <<: *db-env
+    ports:
+      - "8006:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # PostgreSQL History_Store (Requirement 11.4 / 11.10 / 11.12).
+  #
+  # Credentials come from the root `.env` DB_* variables (or the documented
+  # defaults). The NAMED VOLUME `pgdata` persists /var/lib/postgresql/data so
+  # History_Records survive `docker compose down` + `up` (without `-v`) and any
+  # container restart (Requirement 11.10 / 12.3). The pg_isready healthcheck is
+  # what the backends' `depends_on: condition: service_healthy` waits on.
+  # ──────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${DB_USER:-ai_monorepo}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${DB_NAME:-ai_monorepo_history}
+    # Published so a host-side pgAdmin or psql (raw layer) can also connect.
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-ai_monorepo} -d ${DB_NAME:-ai_monorepo_history}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # pgAdmin Database_Manager (Requirement 11.13). Reachable at http://localhost:5050 .
+  # Login with PGADMIN_DEFAULT_EMAIL / PGADMIN_DEFAULT_PASSWORD (from `.env` or the
+  # defaults). Inside pgAdmin, register a server pointing at host `postgres`,
+  # port 5432, using the DB_* credentials (see README "Database inspection").
+  # ──────────────────────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:8
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      # Single-user practice setup: skip the master-password prompt.
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+# Named volume backing the History_Store so records persist across restarts
+# (Requirement 11.10). Remove ONLY with `docker compose down -v`.
+volumes:
+  pgdata:
