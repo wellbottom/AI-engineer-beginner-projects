@@ -12,14 +12,19 @@ license = { text = "MIT" }
 authors = [{ name = "AI Engineer Practice Monorepo" }]
 dependencies = [
     # Minimal runtime deps for the Task 2 config + errors layer.
-    # Heavier deps (openai, sqlalchemy, psycopg, chroma, huggingface_hub, etc.)
-    # are added in later tasks as their modules are implemented.
     "python-dotenv>=1.0",
+    # Task 3: OpenAI-compatible LLM client (points at the local gateway).
+    # Isolated behind a lazy import in ai_shared.llm_client so the pure logic
+    # (resolve_model, SSE formatting, stream-event handling) stays testable
+    # without a live client. Heavier deps (sqlalchemy, psycopg, chroma,
+    # huggingface_hub, etc.) are added in later tasks as their modules land.
+    "openai>=1.40",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
     "hypothesis>=6.100",
 ]
 
@@ -29,3 +34,4 @@ include = ["ai_shared*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

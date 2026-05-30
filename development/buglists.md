@@ -56,6 +56,7 @@ implementation or testing. It is governed by `.kiro/steering/development-workflo
 - **Regression test:** `pip install -e ".[test]"` in each service venv exits 0; `pytest` green. (Task 2: confirmed green.)
 - **Related requirement / property:** Requirement 1.4 (one venv + one manifest per service); design "Python 3.11+".
 - **Resolution:** Tracked. If a later task hits a missing 3.14 wheel, decide between (a) installing a 3.11/3.12 interpreter for the affected service venv, or (b) pinning a compatible dependency version — and record the decision here rather than silently working around it.
+- **Update (Task 3 — LLM client):** First native-ish dependency added. `pip install "openai>=1.40"` resolved **`openai 2.38.0`** on Python 3.14 with native cp314 wheels for its transitive native deps (`jiter-0.15.0-cp314-cp314-win_amd64`, `pydantic-core-2.46.4-cp314-cp314-win_amd64`); `python -c "import openai; from openai import AsyncOpenAI"` succeeds and the full `ai_shared` suite (46 tests) is green. **No 3.14 wheel gap for `openai`.** As a defensive measure the `openai` import is isolated behind a lazy import in `ai_shared/llm_client.py` (and the underlying client is injectable), so `resolve_model`, SSE formatting, and stream-event handling stay importable/testable even if a future environment lacks an `openai` wheel. Risk remains **Deferred** (still no upper bound; `psycopg`/`chromadb`/`huggingface_hub` in Tasks 4/5/11 are the next wheel-gap candidates).
 
 ## Resolved bugs
 
