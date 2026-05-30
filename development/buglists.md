@@ -85,6 +85,17 @@ implementation or testing. It is governed by `.kiro/steering/development-workflo
 - **Related requirement / property:** Requirements 6.5, 6.6, 12.7, 12.4; Properties 12, 13
 - **Resolution:** Documented decision. If the user later wants search-failure errors recorded for audit, add a separate error-history table rather than persisting a `WebAgentRecord` with no answer (which would pollute the "answers" history list).
 
+### BUG-009: Capstone MCP_Server — in-process MCP-style tool registry vs a full MCP SDK
+- **Status:** Resolved (design decision documented; not a defect)
+- **Discovered:** 2026-07-?? (Task 12.1 — capstone MCP_Server)
+- **Area:** services/capstone/app/mcp.py (consumed by app/agent.py + app/main.py)
+- **Edge case:** Requirement 9.2 requires the Capstone_App to expose ≥1 tool to the Agent **via the Model Context Protocol**. A full MCP SDK is a JSON-RPC server over stdio/SSE plus a separate client transport — heavyweight for a single-process practice service, and a new third-party dependency that carries Python-3.14 wheel risk (cf. BUG-002). The decision was whether to add a real MCP SDK or implement a minimal MCP-shaped interface in-process.
+- **Expected:** The Agent has ≥1 working tool exposed through an MCP-shaped interface (name/description/invoke), with tool failures recorded-and-continued (Requirement 9.8), and no extra wheel-gap risk.
+- **Decision (implemented):** Implemented a **minimal in-process MCP-style tool registry** (`app/mcp.py`): each `MCPTool` has a `name`, a `description`, and an `invoke(arguments)` method; the `MCPServer` mirrors the MCP server surface (`list_tools` / `invoke`). Two real, deterministic tools are registered — `word_count` (always succeeds) and `calculator` (succeeds on arithmetic, fails cleanly on non-arithmetic input, exercising the record-and-continue path) — so the Agent always has ≥1 tool (Requirement 9.2). No MCP SDK is imported, so there is **no new 3.14-wheel risk**. The Agent depends only on the `list_tools` / `invoke` surface (not on any transport), so adopting a real MCP SDK later (a heavy/optional dependency would be isolated behind a lazy import) touches only `app/mcp.py`. A tool that raises is mapped onto a structured `MCPToolError(tool, reason)`; the Agent records it as a failed `ToolInvocation(ok=False)` and continues with the remaining steps (Requirement 9.8).
+- **Regression test:** `services/capstone/tests/test_app_example.py::test_mcp_server_exposes_at_least_one_tool`, `::test_tools_endpoint_lists_registered_tools`, `::test_mcp_unknown_tool_is_recorded_as_failed`, `::test_failed_tool_surfaced_and_run_continues`; Property 26 (`test_final_response_property.py`) drives mixed ok/failed tool invocations.
+- **Related requirement / property:** Requirements 9.2, 9.8; Property 26.
+- **Resolution:** Documented decision. If the user later wants a real over-the-wire MCP transport, replace `app/mcp.py`'s registry with an MCP SDK client/server behind a lazy import, keeping the `list_tools` / `invoke` surface the Agent consumes; record the chosen SDK + its 3.14 wheel status here.
+
 ## Resolved bugs
 
 ### BUG-006: Postgres rejects NUL bytes (`\x00`) in persisted text — durable history silently dropped for such input
