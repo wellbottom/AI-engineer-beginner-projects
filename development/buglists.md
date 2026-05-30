@@ -62,6 +62,19 @@ implementation or testing. It is governed by `.kiro/steering/development-workflo
 
 ## Resolved bugs
 
+### BUG-004: Playground SSE uses StreamingResponse + ai_shared.sse (not sse-starlette)
+- **Status:** Resolved
+- **Discovered:** 2026-01-?? (Task 7.1/7.4 — LLM Playground service streaming layer)
+- **Area:** services/llm-playground/app/main.py (`POST /generate`), services/llm-playground/requirements.txt
+- **Branch:** feat/svc-llm-playground
+- **Edge case:** The task hint suggested `sse-starlette`'s `EventSourceResponse` OR FastAPI `StreamingResponse` with the shared `ai_shared.sse` helpers. `EventSourceResponse` re-frames each yielded value as its own `data:` field, which would DOUBLE-encode frames that are already fully-formatted `event:`/`data:` strings produced by `ai_shared.sse.format_*` — corrupting the wire format the frontend SSE client (`apps/web/src/lib/api.ts`) parses.
+- **Expected:** Exactly one SSE-formatting source of truth (`ai_shared.sse`) so every service emits an identical `event:`/`data:` wire format (design "SSE contract").
+- **Actual:** Chose FastAPI `StreamingResponse(media_type="text/event-stream")` and yield the `ai_shared.sse` frame strings directly (no double encoding). `sse-starlette` is intentionally NOT a dependency; `requirements.txt` documents this. The frontend already splits on blank lines and parses `event:`/`data:` lines, so the format matches.
+- **Regression test:** `services/llm-playground/tests/test_app_example.py::test_generate_relays_tokens_in_order` (and the persistence/error-frame tests) parse the raw SSE body with `ai_shared.sse.parse_sse_frame` and assert correct `data`/`done`/`error` frames — these would fail under double-encoding.
+- **Related requirement / property:** Requirements 3.10, 4.4, 4.5, 4.6; design "SSE contract"
+- **Resolution:** Deliberate, documented decision (not a defect). Task 15 (Docker/deployment) must NOT assume `sse-starlette` is installed for llm-playground; the service depends only on `fastapi`/`uvicorn` for serving plus the shared `ai_shared.sse` helpers. If a later service genuinely needs `EventSourceResponse`, it must format payloads as raw dicts, not pre-framed strings.
+
+
 ### BUG-003: Capstone history merges two tables into one id space (task vs ingest)
 - **Status:** Resolved
 - **Discovered:** 2026-01-?? (Task 4.3 — history.py HistoryRepository for the capstone project)
