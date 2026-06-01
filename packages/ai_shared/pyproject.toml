@@ -16,9 +16,30 @@ dependencies = [
     # Task 3: OpenAI-compatible LLM client (points at the local gateway).
     # Isolated behind a lazy import in ai_shared.llm_client so the pure logic
     # (resolve_model, SSE formatting, stream-event handling) stays testable
-    # without a live client. Heavier deps (sqlalchemy, psycopg, chroma,
-    # huggingface_hub, etc.) are added in later tasks as their modules land.
+    # without a live client.
     "openai>=1.40",
+    # Task 4: shared persistence layer (History_Store). SQLAlchemy 2.x ORM +
+    # psycopg v3 driver (the bundled-binary extra ships a self-contained wheel,
+    # avoiding a local libpq/build toolchain) and Alembic for the shared
+    # migration history. All resolved native cp314 wheels on Python 3.14
+    # (see development/buglists.md BUG-002).
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+    # Task 5: provider wrappers (Requirements 6.1, 6.6, 7.2, 7.3, 7.7).
+    # Each third-party SDK is isolated behind a lazy import in its wrapper
+    # (ai_shared.search / embeddings / vectorstore) and the client is injectable,
+    # so the wrappers' normalization/timeout/error-mapping logic stays testable
+    # without these libraries installed.
+    #   - tavily-python: Tavily web search wrapper.
+    #   - huggingface_hub: HF inference embeddings (and image generation, Task 11).
+    #   - chromadb: local persistent vector store.
+    # All resolved native cp314 wheels on Python 3.14 with NO source build
+    # (chromadb pulled onnxruntime/tokenizers/grpcio/numpy as prebuilt wheels) —
+    # see development/buglists.md BUG-002 (Task 5 update).
+    "tavily-python>=0.5",
+    "huggingface_hub>=0.23",
+    "chromadb>=0.5",
 ]
 
 [project.optional-dependencies]
