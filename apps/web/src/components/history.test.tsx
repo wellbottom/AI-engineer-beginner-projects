@@ -173,3 +173,73 @@ describe('history retrieval failure / timeout (Requirement 13.6)', () => {
     expect(screen.getByText(/timed out after 60 seconds/i)).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// BUG-016 — the backends serialize history with their own field names: the LIST
+// endpoint returns bare summaries with NO `outputs`, and the DETAIL endpoint
+// nests its payload under project-specific keys (e.g. playground
+// `outputs.response_text`). Before the normalization adapter, `HistoryList` read
+// `record.outputs.error` on a summary with no `outputs` and threw "Cannot read
+// properties of undefined (reading 'error')", blanking the whole app for EVERY
+// project. These tests feed the REAL backend shapes and assert the list renders
+// (no throw) and the detail normalizes onto the frontend render fields.
+// ---------------------------------------------------------------------------
+
+// Real backend `GET /history` summary shape (services/*/app/serialize.py
+// summary_to_json): id, project_id, created_at, label — and crucially NO outputs.
+const BACKEND_SUMMARIES = [
+  { id: '7', project_id: 'playground', created_at: '2026-02-03T09:00:00.000Z', label: 'summary only prompt' },
+];
+
+// Real backend `GET /history/{id}` detail shape (playground record_to_json):
+// outputs.response_text + outputs.usage (NOT the frontend outputs.text/metadata).
+const BACKEND_DETAIL = {
+  id: '7',
+  project_id: 'playground',
+  created_at: '2026-02-03T09:00:00.000Z',
+  inputs: { prompt: 'summary only prompt', system_prompt: null, temperature: 0.7, max_tokens: 512, model: 'claude-opus-4.7' },
+  outputs: { response_text: 'persisted backend answer', usage: { prompt_tokens: 3, output_tokens: 4, total_tokens: 7 } },
+};
+
+describe('BUG-016: backend history field-name shapes are normalized', () => {
+  it('renders the list from bare backend summaries (no `outputs`) without crashing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => BACKEND_SUMMARIES } as unknown as Response),
+    );
+
+    const App = await loadApp();
+    render(<App />);
+    gotoPlaygroundHistory();
+
+    // Before the fix this threw inside HistoryList.map (record.outputs.error) and
+    // rendered nothing; now the label renders and the row shows a status badge.
+    await waitFor(() => expect(screen.getByText('summary only prompt')).toBeInTheDocument());
+    expect(screen.getByText(/Historic Logs \(1\)/i)).toBeInTheDocument();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+  });
+
+  it('normalizes a backend detail (`response_text`) onto the rendered output text (13.4)', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/history')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => BACKEND_SUMMARIES } as unknown as Response);
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => BACKEND_DETAIL } as unknown as Response);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const App = await loadApp();
+    render(<App />);
+    gotoPlaygroundHistory();
+
+    await waitFor(() => expect(screen.getByText('summary only prompt')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('summary only prompt'));
+
+    // The backend `outputs.response_text` is surfaced as the rendered answer.
+    await waitFor(() => expect(screen.getByText('persisted backend answer')).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${PLAYGROUND_URL}/history/7`,
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+});
