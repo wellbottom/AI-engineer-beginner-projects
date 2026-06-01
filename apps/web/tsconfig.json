@@ -1,0 +1,21 @@
+{
+  "extends": "@repo/ts-config/base.json",
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    // The generated SPA was authored without `strict`/unused checks; keep the
+    // app's original looseness here so `tsc` stays clean while still consuming
+    // the shared @repo/ts-config base (target/module/lib/jsx/moduleResolution).
+    "strict": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": false,
+    "types": ["node", "vitest/globals", "@testing-library/jest-dom"],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["src", "vite.config.ts", "tailwind.config.ts", "vitest.setup.ts"]
+}

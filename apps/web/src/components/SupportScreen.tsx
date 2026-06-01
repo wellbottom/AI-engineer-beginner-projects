@@ -4,22 +4,22 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, User, Cpu, AlertTriangle, MessageSquare, RefreshCw } from 'lucide-react';
-import { 
-  Card, 
-  Button, 
-  Textarea, 
-  StreamingMarkdown, 
-  ErrorBanner, 
-  Badge, 
-  PersistenceIndicator 
+import { Send, User, Cpu, MessageSquare, RefreshCw } from 'lucide-react';
+import {
+  Card,
+  Button,
+  Textarea,
+  StreamingMarkdown,
+  ErrorBanner,
+  Badge,
+  PersistenceIndicator,
 } from './SharedComponents';
-import { 
-  fetchSSEStream, 
-  SERVICE_URLS, 
-  saveLocalHistoryItem, 
-  createChatSession, 
-  deleteChatSession 
+import {
+  fetchSSEStream,
+  SERVICE_URLS,
+  PROJECT_ENV_VARS,
+  createChatSession,
+  deleteChatSession,
 } from '../lib/api';
 import { HistoryRecord, SSEDataEvent, SSEDoneEvent, SSEErrorEvent } from '../types';
 
@@ -35,13 +35,7 @@ interface SupportScreenProps {
 }
 
 export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      sender: 'system',
-      text: 'Session established. State synced on gateway.',
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [composer, setComposer] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [loading, setLoading] = useState(false);
@@ -51,40 +45,42 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
   // Errors state
   const [validationError, setValidationError] = useState('');
   const [chatbotError, setChatbotError] = useState<SSEErrorEvent | null>(null);
-  const [persistenceMeta, setPersistenceMeta] = useState<any>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [persistenceMeta, setPersistenceMeta] = useState<{ ok: boolean; operation_id?: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Initialize chatbot session
+  const configured = !!SERVICE_URLS.support;
+
+  // Initialize chatbot session against the real backend.
   useEffect(() => {
     let active = true;
     const initializeSession = async () => {
+      if (!SERVICE_URLS.support) {
+        setSessionLoading(false);
+        setSessionError(
+          `Support Chatbot backend is not configured. Set ${PROJECT_ENV_VARS.support} to its base URL.`,
+        );
+        return;
+      }
       try {
         setSessionLoading(true);
         const { session_id } = await createChatSession();
         if (active) {
           setSessionId(session_id);
-          setMessages(prev => [
-            ...prev,
+          setMessages([
             {
               id: 'agent-greeting',
               sender: 'assistant',
-              text: 'Hello! I am your AI Support Companion. How can I assist with your services, queries, or sandbox items today?'
-            }
+              text: 'Hello! I am your support assistant. How can I help you today?',
+            },
           ]);
         }
       } catch (err) {
-        console.warn('Backend session creator failed. Using client simulation session.', err);
         if (active) {
-          setSessionId(`local_${Math.random().toString(36).substring(2, 9)}`);
-          setMessages(prev => [
-            ...prev,
-            {
-              id: 'agent-greeting',
-              sender: 'assistant',
-              text: 'Support Gateway running in local emulation. How can I assist with the monorepo operations?'
-            }
-          ]);
+          setSessionError(
+            `Could not establish a support session: ${(err as Error).message}`,
+          );
         }
       } finally {
         if (active) setSessionLoading(false);
@@ -95,11 +91,18 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
 
     return () => {
       active = false;
-      if (sessionId && !sessionId.startsWith('local_')) {
-        deleteChatSession(sessionId).catch(console.error);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Clean up the session on unmount.
+  useEffect(() => {
+    return () => {
+      if (sessionId) {
+        deleteChatSession(sessionId).catch(() => undefined);
       }
     };
-  }, []);
+  }, [sessionId]);
 
   // Scroll to bottom when messages append
   useEffect(() => {
@@ -121,6 +124,14 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
       return;
     }
 
+    if (!SERVICE_URLS.support) {
+      setChatbotError({
+        action: 'support_chat',
+        reason: `Support Chatbot backend is not configured. Set ${PROJECT_ENV_VARS.support} to its base URL.`,
+      });
+      return;
+    }
+
     setValidationError('');
     setComposer('');
     setChatbotError(null);
@@ -129,159 +140,90 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
     const userMsgId = `usr_${Date.now()}`;
     const assistantMsgId = `asst_${Date.now()}`;
 
-    // Append user message
-    setMessages(prev => [
-      ...prev,
-      { id: userMsgId, sender: 'user', text: trimmed }
-    ]);
+    // Append user message (retained even if the request fails — Requirement 2.7).
+    setMessages((prev) => [...prev, { id: userMsgId, sender: 'user', text: trimmed }]);
 
     setLoading(true);
 
-    const targetUrl = SERVICE_URLS.support ? `${SERVICE_URLS.support}/chat` : '';
-    
     let completeText = '';
     let finalMeta: SSEDoneEvent | null = null;
     let sError: SSEErrorEvent | null = null;
 
-    if (!targetUrl) {
-      // Direct emulation mode
-      try {
-        await new Promise(resolve => setTimeout(resolve, 800));
-        setLoading(false);
-        setIsStreaming(true);
+    setMessages((prev) => [
+      ...prev,
+      { id: assistantMsgId, sender: 'assistant', text: '', isStreaming: true },
+    ]);
+    setIsStreaming(true);
 
-        const lower = trimmed.toLowerCase();
-        let replyString = "";
-        
-        if (lower.includes('price') || lower.includes('billing') || lower.includes('cost')) {
-          replyString = "I detected queries around billing. This repository operates strictly in a local sandbox mode; no charge will occur for utilizing simulation runs. Make sure you customize model thresholds inside parameters.";
-        } else if (lower.includes('unsupported') || lower.includes('outside') || lower.includes('weather') || lower.includes('sports')) {
-          replyString = "outside_supported_topics: Weather forecasts, sports matches, and third-party stock telemetry fall outside supported support scopes. Please consult specialized API endpoints.";
-        } else {
-          replyString = `Your message regarding "${trimmed.slice(0, 40)}" has been parsed. In support environment chat models:
-1. Message inputs are length-tested statically.
-2. Context keys and states persist cleanly in session ID \`${sessionId}\`.
-3. Safe markdown formatting can be utilized dynamically.`;
-        }
-
-        // Output as dynamic response
-        setMessages(prev => [
-          ...prev,
-          { id: assistantMsgId, sender: 'assistant', text: '', isStreaming: true }
-        ]);
-
-        const words = replyString.split(' ');
-        for (let i = 0; i < words.length; i++) {
-          await new Promise(resolve => setTimeout(resolve, 40));
-          const chunk = words[i] + ' ';
-          completeText += chunk;
-          
-          setMessages(prev => prev.map(msg => 
-            msg.id === assistantMsgId ? { ...msg, text: completeText } : msg
-          ));
-        }
-
-        finalMeta = {
-          persistence: { ok: false, operation_id: 'emulated_support' }
-        };
-        setPersistenceMeta(finalMeta.persistence);
-      } catch (err: any) {
-        setChatbotError({
-          action: 'emulated_chat',
-          reason: err.message || 'Stream generation crashed'
-        });
-      } finally {
-        setIsStreaming(false);
-        setMessages(prev => prev.map(msg => 
-          msg.id === assistantMsgId ? { ...msg, isStreaming: false } : msg
-        ));
-      }
-    } else {
-      // Connect to streamed endpoint
-      setMessages(prev => [
-        ...prev,
-        { id: assistantMsgId, sender: 'assistant', text: '', isStreaming: true }
-      ]);
-      setIsStreaming(true);
-
-      await fetchSSEStream(
-        targetUrl,
-        {
-          session_id: sessionId,
-          message: trimmed
+    await fetchSSEStream(
+      `${SERVICE_URLS.support}/chat`,
+      { session_id: sessionId, message: trimmed },
+      {
+        onData: (eventData: SSEDataEvent) => {
+          setLoading(false);
+          completeText += eventData.text;
+          setMessages((prev) =>
+            prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, text: completeText } : msg)),
+          );
         },
-        {
-          onData: (eventData: SSEDataEvent) => {
-            setLoading(false);
-            completeText += eventData.text;
-            setMessages(prev => prev.map(msg => 
-              msg.id === assistantMsgId ? { ...msg, text: completeText } : msg
-            ));
-          },
-          onDone: (done: SSEDoneEvent) => {
-            finalMeta = done;
-            setPersistenceMeta(done.persistence || null);
-          },
-          onError: (err: SSEErrorEvent) => {
-            sError = err;
-            setChatbotError(err);
-          }
-        }
-      );
+        onDone: (done: SSEDoneEvent) => {
+          finalMeta = done;
+          setPersistenceMeta(done.persistence ?? null);
+        },
+        onError: (err: SSEErrorEvent) => {
+          sError = err;
+          setChatbotError(err);
+        },
+      },
+    );
 
-      setIsStreaming(false);
-      setLoading(false);
-      setMessages(prev => prev.map(msg => 
-        msg.id === assistantMsgId ? { ...msg, isStreaming: false } : msg
-      ));
-    }
+    setIsStreaming(false);
+    setLoading(false);
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, isStreaming: false } : msg)),
+    );
 
-    // Save success or failed to local history log as per State Matrix
     const histRecord: HistoryRecord = {
       id: `chat_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       projectId: 'support',
       created_at: new Date().toISOString(),
       label: trimmed.length > 50 ? `${trimmed.substring(0, 50)}...` : trimmed,
-      inputs: {
-        session_id: sessionId,
-        message: trimmed
-      },
+      inputs: { session_id: sessionId, message: trimmed },
       outputs: {
         text: completeText || undefined,
         metadata: finalMeta || undefined,
-        error: sError || undefined
-      }
+        error: sError || undefined,
+      },
     };
-
-    saveLocalHistoryItem('support', histRecord);
     onAddHistory(histRecord);
   };
 
   const handleResetSession = async () => {
+    if (!SERVICE_URLS.support) return;
     setSessionLoading(true);
     setComposer('');
     setValidationError('');
     setChatbotError(null);
+    setSessionError(null);
     setPersistenceMeta(null);
-    
-    // Attempt deleting previous session if not local
-    if (sessionId && !sessionId.startsWith('local_')) {
-      await deleteChatSession(sessionId).catch(console.error);
+
+    if (sessionId) {
+      await deleteChatSession(sessionId).catch(() => undefined);
     }
 
     try {
       const { session_id } = await createChatSession();
       setSessionId(session_id);
       setMessages([
-        { id: `sys_${Date.now()}`, sender: 'system', text: 'New server connection established. Previous state deleted.' },
-        { id: `asst_greet_${Date.now()}`, sender: 'assistant', text: 'Hello! This is a fresh support session. What can I answer for you?' }
+        { id: `sys_${Date.now()}`, sender: 'system', text: 'New session established.' },
+        {
+          id: `asst_greet_${Date.now()}`,
+          sender: 'assistant',
+          text: 'Hello! This is a fresh support session. What can I answer for you?',
+        },
       ]);
-    } catch {
-      setSessionId(`local_${Math.random().toString(36).substring(2, 9)}`);
-      setMessages([
-        { id: `sys_${Date.now()}`, sender: 'system', text: 'Fresh local backup session established.' },
-        { id: `asst_greet_${Date.now()}`, sender: 'assistant', text: 'Emulated support is ready for your search queries.' }
-      ]);
+    } catch (err) {
+      setSessionError(`Could not establish a support session: ${(err as Error).message}`);
     } finally {
       setSessionLoading(false);
     }
@@ -296,7 +238,7 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
 
   return (
     <div className="max-w-3xl mx-auto w-full flex flex-col gap-6">
-      
+
       {/* Session info bar */}
       <div className="flex items-center justify-between border border-border-dim bg-surface p-3 rounded-lg select-none text-xs font-mono">
         <div className="flex items-center gap-2">
@@ -305,14 +247,16 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
           {sessionLoading ? (
             <span className="text-text-muted animate-pulse">Allocating...</span>
           ) : (
-            <span className="text-white font-medium select-all truncate max-w-[140px] sm:max-w-[200px]">{sessionId}</span>
+            <span className="text-white font-medium select-all truncate max-w-[140px] sm:max-w-[200px]">
+              {sessionId || 'unavailable'}
+            </span>
           )}
         </div>
 
         <Button
           variant="ghost"
           onClick={handleResetSession}
-          disabled={sessionLoading || loading || isStreaming}
+          disabled={!configured || sessionLoading || loading || isStreaming}
           className="h-7 px-2.5 ml-2 border border-border-dim hover:border-border-strong text-[11px] gap-1.5"
         >
           <RefreshCw className="w-3 h-3" />
@@ -320,28 +264,36 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
         </Button>
       </div>
 
+      {/* Session/config error */}
+      {sessionError && (
+        <ErrorBanner action="support_session" reason={sessionError} />
+      )}
+
       {/* Messages Thread pane */}
       <div className="bg-surface border border-border-dim rounded-lg p-5 flex flex-col gap-5 min-h-[380px] max-h-[500px] overflow-y-auto shadow-sm select-text">
         {messages.map((msg) => {
           if (msg.sender === 'system') {
             return (
-              <div key={msg.id} className="self-center bg-surface-2 border border-border-dim text-[11px] font-mono select-none px-3 py-1 rounded text-text-faint tracking-wider my-1">
+              <div
+                key={msg.id}
+                className="self-center bg-surface-2 border border-border-dim text-[11px] font-mono select-none px-3 py-1 rounded text-text-faint tracking-wider my-1"
+              >
                 {msg.text}
               </div>
             );
           }
 
           const isUser = msg.sender === 'user';
-          // Check for out of topic prefix
           const isOutOfTopic = msg.text.startsWith('outside_supported_topics:');
-          const cleanText = isOutOfTopic ? msg.text.replace('outside_supported_topics:', '').trim() : msg.text;
+          const cleanText = isOutOfTopic
+            ? msg.text.replace('outside_supported_topics:', '').trim()
+            : msg.text;
 
           return (
             <div
               key={msg.id}
               className={`flex flex-col gap-1.5 max-w-[85%] ${isUser ? 'self-end items-end' : 'self-start items-start'}`}
             >
-              {/* Header profile label */}
               <div className="flex items-center gap-1 text-[10px] font-mono text-text-faint select-none">
                 {isUser ? (
                   <>
@@ -356,7 +308,6 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
                 )}
               </div>
 
-              {/* Message box */}
               <div
                 className={`px-4 py-2.5 rounded-lg text-sm border font-sans ${isUser ? 'bg-surface-3 text-text-main rounded-tr-none border-border-dim' : 'bg-surface py-3 text-text-main rounded-tl-none border-border-dim'}`}
               >
@@ -365,7 +316,7 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
                     <Badge variant="neutral">outside supported topics</Badge>
                   </div>
                 )}
-                
+
                 {isUser ? (
                   <p className="whitespace-pre-wrap leading-relaxed break-words">{cleanText}</p>
                 ) : (
@@ -381,18 +332,15 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
       {/* Persistence indicator warning */}
       {persistenceMeta && !persistenceMeta.ok && (
         <div className="self-start select-none">
-          <PersistenceIndicator
-            ok={persistenceMeta.ok}
-            operationId={persistenceMeta.operation_id}
-          />
+          <PersistenceIndicator ok={persistenceMeta.ok} operationId={persistenceMeta.operation_id} />
         </div>
       )}
 
-      {/* Gateway Failure Error Banner (States 5.6) */}
+      {/* Gateway Failure Error Banner (Requirement 5.6 / 2.7) */}
       {chatbotError && (
         <ErrorBanner
-          action="assistant_connection"
-          reason="Assistant temporarily unavailable. Session parameters and transcript histories have been retained."
+          action={chatbotError.action}
+          reason={chatbotError.reason}
         />
       )}
 
@@ -401,25 +349,23 @@ export const SupportScreen: React.FC<SupportScreenProps> = ({ onAddHistory }) =>
         <div className="flex flex-col gap-3 relative">
           <Textarea
             id="chat-textarea-compose"
-            placeholder={sessionLoading ? "Awaiting session initialization..." : "Describe your custom issue (Enter sends, Shift+Enter line-break)..."}
+            placeholder={sessionLoading ? 'Awaiting session initialization...' : 'Describe your issue (Enter sends, Shift+Enter line-break)...'}
             value={composer}
             onChange={(e) => setComposer(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={sessionLoading || loading || isStreaming}
+            disabled={!configured || sessionLoading || loading || isStreaming}
             maxLength={4000}
             error={validationError}
             className="min-h-[64px]"
           />
-          
+
           <div className="flex items-center justify-between border-t border-border-dim pt-2 mt-1">
-            <span className="text-[10px] font-mono text-text-faint select-none">
-              Supports markdown.
-            </span>
-            
+            <span className="text-[10px] font-mono text-text-faint select-none">Supports markdown.</span>
+
             <Button
               variant="primary"
               onClick={handleSend}
-              disabled={sessionLoading || loading || isStreaming || !composer.trim()}
+              disabled={!configured || sessionLoading || loading || isStreaming || !composer.trim()}
               isLoading={loading || isStreaming}
               className="px-5 text-xs font-semibold h-9 shrink-0 gap-1.5"
             >

@@ -109,18 +109,29 @@ implementation or testing. It is governed by `.kiro/steering/development-workflo
 - **Resolution:** Mitigated by idempotent-upgrade + retry-with-backoff in `deploy/service-entrypoint.sh` (cited from every `services/<name>/Dockerfile`). A heavier alternative — gating migrations behind a single one-shot "migrate" container that the six services depend on — was considered and deferred as over-engineered for a single-shared-schema practice setup; revisit if the retry proves insufficient under load.
 
 ### BUG-011: Frontend build-context depends on the Task 16 relocation
-- **Status:** Open
+- **Status:** Resolved
 - **Discovered:** 2026-07-?? (Task 15.1/15.2 — frontend Dockerfile + Compose `web` service)
-- **Area:** docker-compose.yml (`web.build.context`) + ai-monorepo-frontend/Dockerfile (VITE_NEXT_PUBLIC_* alias bridge)
-- **Branch:** feat/deployment
-- **Edge case:** The Shared_Frontend currently lives at `./ai-monorepo-frontend` (repo root), but Task 16 RELOCATES it to `./apps/web`. Two deployment artifacts encode the pre-Task-16 location: (1) `docker-compose.yml`'s `web.build.context` is `./ai-monorepo-frontend` and MUST become `./apps/web` once the SPA moves; (2) the frontend `Dockerfile` forwards each `VITE_*` build arg to a `VITE_NEXT_PUBLIC_*` alias because the current SPA code (`src/lib/api.ts`) still reads the `NEXT_PUBLIC_*`/`VITE_NEXT_PUBLIC_*` names.
+- **Area:** docker-compose.yml (`web.build.context`) + apps/web/Dockerfile (VITE_NEXT_PUBLIC_* alias bridge)
+- **Branch:** feat/frontend-apps-web
+- **Edge case:** The Shared_Frontend lived at `./ai-monorepo-frontend` (repo root), but the design fixes it at `./apps/web`. Two deployment artifacts encoded the pre-Task-16 location: (1) `docker-compose.yml`'s `web.build.context` was `./ai-monorepo-frontend`; (2) the frontend `Dockerfile` forwarded each `VITE_*` build arg to a `VITE_NEXT_PUBLIC_*` alias because the generated SPA code (`src/lib/api.ts`) still read the `NEXT_PUBLIC_*`/`VITE_NEXT_PUBLIC_*` names.
 - **Expected:** After Task 16, the Compose `web` build context points at `./apps/web`, the SPA reads the six `VITE_*` names directly (Requirement 2.9), and the alias bridge is removed.
-- **Actual:** Tracked, not yet actionable — the relocation and the env rename are Task 16 work. Until then the alias bridge keeps the pre-Task-16 bundle working and the build context intentionally points at `./ai-monorepo-frontend`. Both spots carry a CLEAR COMMENT pointing here.
-- **Regression test:** Task 16.4 (`apps/web` Vitest, `getServiceUrl`/`SERVICE_URLS` resolve the six `VITE_*` names via `import.meta.env`, non-`VITE_`-prefixed names resolve empty) will assert the SPA reads `VITE_*` directly after the rename; the deploy smoke test asserts a single frontend app + a single Compose `web` service for now.
+- **Regression test:** `apps/web/src/lib/serviceUrls.test.ts` (Task 16.4) asserts `getServiceUrl`/`SERVICE_URLS` resolve the six `VITE_*` names via `import.meta.env` and that non-`VITE_`-prefixed names (incl. `NEXT_PUBLIC_*`) resolve to empty — proving the SPA reads `VITE_*` directly after the rename.
 - **Related requirement / property:** Requirements 1.1, 2.9, 11.2; Tasks 16.1, 16.2.
-- **Resolution (planned in Task 16):** When Task 16.1 moves the SPA to `apps/web`, change `docker-compose.yml` `web.build.context` to `./apps/web`; when Task 16.2 renames the SPA env reads to `VITE_*`, drop the `VITE_NEXT_PUBLIC_*` alias lines from the frontend `Dockerfile`. Mark Resolved once both land and the Task 16.4 env test passes.
+- **Resolution:** Resolved in Task 16. Task 16.1 moved the SPA to `apps/web` (via `git mv`, history preserved) and changed `docker-compose.yml` `web.build.context` to `./apps/web`; Task 16.2 renamed the SPA env reads to the six `VITE_*` names and dropped the `VITE_NEXT_PUBLIC_*` alias `ENV` lines from `apps/web/Dockerfile` (it now sets only the six `VITE_*` args). The Task 16.4 env test passes (4/4), so both halves of the fix are verified.
 
 ## Resolved bugs
+
+### BUG-012: apps/web Docker build can't resolve the `@repo/ts-config` `workspace:*` dep (isolated npm context)
+- **Status:** Resolved (mitigated)
+- **Discovered:** 2026-07-?? (Task 16.1 — fold the SPA into the pnpm workspace + Docker build)
+- **Area:** apps/web/Dockerfile + apps/web/package.json (`devDependencies.@repo/ts-config: "workspace:*"`)
+- **Branch:** feat/frontend-apps-web
+- **Edge case:** Task 16.1 makes `apps/web` consume `packages/ts-config` by declaring `@repo/ts-config` as a `workspace:*` devDependency (used by the JS `tailwind.config.ts` and the `tsconfig.json` `extends`). But `docker-compose.yml` sets the `web` build context to `./apps/web` (Requirement 11.2 + BUG-011), so the Docker build sees ONLY `apps/web` and installs with plain `npm`, which cannot resolve the pnpm `workspace:*` protocol — `npm install` would error on that dependency string, breaking the image build.
+- **Expected:** `docker build` of `apps/web` produces the static Vite bundle without needing the rest of the monorepo in its context.
+- **Actual / mitigation:** The Tailwind v4 build is **CSS-first** (`@theme` block in `src/index.css`); the JS `tailwind.config.ts` (the only runtime consumer of `@repo/ts-config`) and the `tsconfig` `extends` are **dev/lint-only** and NOT used by `vite build` (verified: `vite build` output is byte-identical with `tailwind.config.ts` removed). The Dockerfile therefore `npm pkg delete "devDependencies.@repo/ts-config"` before `npm install`, and `rm -f tailwind.config.ts` before `npm run build`, so the isolated npm build succeeds while the workspace install (pnpm, at the root) still links `@repo/ts-config` for local dev/lint.
+- **Regression test:** `apps/web` `pnpm run build` succeeds in the workspace (verified, Task 16); the Compose/Docker build path is covered by the Task 15 deploy integration tests (`tests/deploy/test_integration_deploy.py`, Docker build/run 11.2). The CSS-first independence was verified manually by removing `tailwind.config.ts` and re-running `vite build` (identical bundle).
+- **Related requirement / property:** Requirements 1.3, 2.1, 11.2; Tasks 16.1, 15.1.
+- **Resolution:** Mitigated in `apps/web/Dockerfile` (strip the workspace-only devDependency + the JS tailwind config before the isolated build). A heavier alternative — building the frontend image from the repo-root context with the full pnpm workspace + `pnpm deploy` — was considered and deferred as over-engineered for this practice setup; revisit if `apps/web` later needs a real runtime dependency from `packages/`.
 
 ### BUG-006: Postgres rejects NUL bytes (`\x00`) in persisted text — durable history silently dropped for such input
 - **Status:** Resolved

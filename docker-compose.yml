@@ -33,21 +33,19 @@ services:
   # ──────────────────────────────────────────────────────────────────────────
   # Shared_Frontend (Vite + React SPA served by nginx).
   #
-  # !!! BUILD-CONTEXT CAVEAT — Task 16 relocation (tracked: buglists BUG-011) !!!
-  # The SPA currently lives at ./ai-monorepo-frontend, so the build context below
-  # points there. Task 16 MOVES the SPA to ./apps/web; when that happens this
-  # `context` MUST change to ./apps/web (the Dockerfile + nginx.conf move with the
-  # frontend, so `dockerfile: Dockerfile` and the COPY paths stay the same).
+  # The SPA lives at ./apps/web (relocated in Task 16 from ./ai-monorepo-frontend;
+  # see buglists BUG-011, now Resolved). The Dockerfile + nginx.conf live in that
+  # context, so `dockerfile: Dockerfile` and the COPY paths are relative to it.
   #
   # The six backend base URLs are Vite BUILD-TIME args (Requirement 2.9): Vite
   # inlines VITE_* into the static bundle at build time. They are the URLs the SPA
   # uses FROM THE BROWSER, so they target the host-published ports (localhost:800x),
-  # not the in-network service names. The frontend Dockerfile bridges each VITE_*
-  # to its VITE_NEXT_PUBLIC_* alias for the pre-Task-16 SPA code.
+  # not the in-network service names. The SPA reads the six VITE_* names directly
+  # (Task 16.2), so no NEXT_PUBLIC_* alias bridge is needed.
   # ──────────────────────────────────────────────────────────────────────────
   web:
     build:
-      context: ./ai-monorepo-frontend   # Task 16: change to ./apps/web
+      context: ./apps/web
       dockerfile: Dockerfile
       args:
         VITE_PLAYGROUND_URL: ${VITE_PLAYGROUND_URL:-http://localhost:8001}
