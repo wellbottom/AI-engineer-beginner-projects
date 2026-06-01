@@ -304,6 +304,96 @@ function requireBaseUrl(projectId: ProjectId): string {
 // ============================================================================
 // HISTORY (real backend — Requirements 13.1, 13.3, 13.6). No local fallback.
 // ============================================================================
+//
+// BUG-016: the six backends serialize history with their own field names. The
+// `GET /history` LIST endpoint returns bare summaries (`{id, project_id,
+// created_at, label}`) with NO `inputs`/`outputs`, and each `GET /history/{id}`
+// DETAIL endpoint nests its payload under project-specific keys
+// (`outputs.response_text`, `outputs.answer`, `outputs.report`,
+// `outputs.data_base64`, support `outputs.turns`, ...). The frontend
+// `HistoryRecord` (see types.ts) instead reads a single normalized shape
+// (`outputs.text`, `outputs.metadata`, `outputs.imageUrl`, `outputs.error`).
+// Without translation the summaries have no `outputs` at all, so
+// `HistoryList` (`record.outputs.error`) threw "Cannot read properties of
+// undefined (reading 'error')" and blanked the whole app for EVERY project.
+//
+// `normalizeHistoryRecord` maps any backend record (summary or detail) onto the
+// frontend `HistoryRecord`. It is intentionally TOLERANT: it prefers the
+// backend field names but falls back to the frontend names, so records produced
+// in-app by `onAddHistory` (already in frontend shape) pass through unchanged.
+
+type RawRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): RawRecord {
+  return value && typeof value === 'object' ? (value as RawRecord) : {};
+}
+
+/**
+ * Translate one backend history payload (a list summary or a full detail record)
+ * into the frontend `HistoryRecord` shape every history view reads. Always
+ * returns defined `inputs`/`outputs` objects so list rendering can never throw on
+ * a missing `outputs` (BUG-016).
+ */
+export function normalizeHistoryRecord(projectId: ProjectId, raw: unknown): HistoryRecord {
+  const r = asRecord(raw);
+  const inputs: Record<string, unknown> = { ...asRecord(r.inputs) };
+  const bo = asRecord(r.outputs);
+  const outputs: HistoryRecord['outputs'] = {};
+
+  // Terminal error (same shape both sides).
+  if (bo.error) outputs.error = bo.error as { action: string; reason: string };
+
+  // Primary text: frontend `text` first, then the per-project backend names.
+  const text =
+    (bo.text as string | undefined) ??
+    (bo.response_text as string | undefined) ?? // playground
+    (bo.answer as string | undefined) ?? // web-agent (capstone uses metadata.answer)
+    undefined;
+  if (text) outputs.text = text;
+
+  // Metadata: start from any frontend-shape metadata, then fold in backend fields
+  // the detail views read (usage, citations, report, capstone answer/tools/...).
+  const meta: Record<string, unknown> = { ...asRecord(bo.metadata) };
+  const fold = (key: string, val: unknown) => {
+    if (val !== undefined && meta[key] === undefined) meta[key] = val;
+  };
+  fold('usage', bo.usage); // playground
+  fold('citations', bo.citations); // web-agent / deep-research
+  fold('report', bo.report); // deep-research
+  fold('sub_questions', bo.sub_questions); // deep-research
+  fold('answer', bo.answer); // capstone (detail reads metadata.answer)
+  fold('tools_invoked', bo.tools_invoked); // capstone
+  fold('sources', bo.sources); // capstone
+  fold('step_limit_reached', bo.step_limit_reached); // capstone
+  if (Object.keys(meta).length > 0) outputs.metadata = meta as HistoryRecord['outputs']['metadata'];
+
+  // Image: keep an in-app data URL, else build one from the backend's re-emitted
+  // PNG bytes (`{mime_type, data_base64}`).
+  if (typeof bo.imageUrl === 'string') {
+    outputs.imageUrl = bo.imageUrl;
+  } else if (typeof bo.data_base64 === 'string') {
+    const mime = typeof bo.mime_type === 'string' ? bo.mime_type : 'image/png';
+    outputs.imageUrl = `data:${mime};base64,${bo.data_base64}`;
+  }
+
+  // Support chatbot: the detail carries a full ordered `turns` list. The detail
+  // view renders one user/assistant pair, so surface the most recent turn (and
+  // expose its user message as `inputs.message`, which that view reads).
+  if (Array.isArray(bo.turns) && bo.turns.length > 0) {
+    const last = asRecord(bo.turns[bo.turns.length - 1]);
+    if (typeof last.user_message === 'string') inputs.message = last.user_message;
+    if (typeof last.assistant_reply === 'string') outputs.text = last.assistant_reply;
+  }
+
+  return {
+    id: String(r.id ?? ''),
+    projectId,
+    created_at: typeof r.created_at === 'string' ? r.created_at : new Date().toISOString(),
+    label: typeof r.label === 'string' ? r.label : '',
+    inputs,
+    outputs,
+  };
+}
 
 async function fetchJsonWithTimeout(url: string): Promise<Response> {
   const controller = new AbortController();
@@ -342,7 +432,11 @@ export async function getRemoteHistory(projectId: ProjectId): Promise<HistoryRec
       `History retrieval failed for ${PROJECT_NAMES[projectId]} (status ${res.status}).`,
     );
   }
-  return (await res.json()) as HistoryRecord[];
+  const rows = (await res.json()) as unknown;
+  const list = Array.isArray(rows) ? rows : [];
+  // Normalize each backend summary into the frontend HistoryRecord shape so the
+  // list view always has a defined `outputs` (BUG-016).
+  return list.map((row) => normalizeHistoryRecord(projectId, row));
 }
 
 /**
@@ -374,7 +468,9 @@ export async function getRemoteHistoryDetail(
       `History retrieval failed for ${PROJECT_NAMES[projectId]} (status ${res.status}).`,
     );
   }
-  return (await res.json()) as HistoryRecord;
+  // Normalize the backend detail payload into the frontend HistoryRecord shape so
+  // the detail views read consistent field names across all six projects (BUG-016).
+  return normalizeHistoryRecord(projectId, await res.json());
 }
 
 // ============================================================================

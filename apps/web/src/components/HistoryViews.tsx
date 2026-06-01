@@ -107,7 +107,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
             </div>
 
             <div className="flex items-center gap-3 pr-1">
-              {record.outputs.error ? (
+              {record.outputs?.error ? (
                 <Badge variant="danger">Failed</Badge>
               ) : (
                 <Badge variant="success">Completed</Badge>
@@ -147,7 +147,7 @@ export const HistoryViewDetail: React.FC<HistoryViewDetailProps> = ({
   record,
   onBack
 }) => {
-  const metadata = record.outputs.metadata;
+  const metadata = record.outputs?.metadata;
 
   return (
     <div className="flex flex-col gap-6">
@@ -163,7 +163,7 @@ export const HistoryViewDetail: React.FC<HistoryViewDetailProps> = ({
         </span>
       </div>
 
-      {record.outputs.error && (
+      {record.outputs?.error && (
         <ErrorBanner 
           action={record.outputs.error.action} 
           reason={record.outputs.error.reason} 
